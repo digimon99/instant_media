@@ -1,0 +1,335 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "Action to perform: generate (create new media), regenerate (new image at existing slot URL), list_slots (list all slots), get_slot (get slot details)",
+      "enum": [
+        "generate",
+        "regenerate",
+        "list_slots",
+        "get_slot"
+      ]
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Text description of the desired media. Required for generate. Optional for regenerate (reuses last prompt if omitted)."
+    },
+    "content_type": {
+      "type": "string",
+      "description": "Type of media to generate. Default: image. 'infographic' uses an optimal model for data-driven infographic visuals. 'image_proxy' downloads and re-serves an external image via builder2 CDN (requires image_url). 'page_screenshot' renders a webpage via headless Chromium and captures a screenshot (requires page_url). 'transcribe' transcribes an audio/video URL to text with timestamps (requires audio_url).",
+      "enum": [
+        "image",
+        "infographic",
+        "image_proxy",
+        "page_screenshot",
+        "video",
+        "video_workflow",
+        "tts",
+        "music",
+        "transcribe"
+      ],
+      "default": "image"
+    },
+    "media_slug": {
+      "type": "string",
+      "description": "URL-friendly name for the media (auto-slugified from prompt if omitted). Used to construct the permanent CDN URL."
+    },
+    "count": {
+      "type": "integer",
+      "description": "Number of variants to generate (1-4, default 1).",
+      "minimum": 1,
+      "maximum": 4,
+      "default": 1
+    },
+    "image_size": {
+      "type": "string",
+      "description": "Image aspect ratio preset (image only). The closest supported value is chosen per model.",
+      "enum": [
+        "landscape_16_9",
+        "landscape_4_3",
+        "square",
+        "portrait_4_3",
+        "portrait_16_9"
+      ],
+      "default": "landscape_16_9"
+    },
+    "character_id": {
+      "type": "string",
+      "description": "Generate with a character's traits (physical & soul) automatically injected into the prompt."
+    },
+    "character_slug": {
+      "type": "string",
+      "description": "Alternative to character_id — use the character's URL slug."
+    },
+    "character_image_url": {
+      "type": "string",
+      "description": "Custom reference image URL for image-edit mode (image type only). Bypasses character lookup — use any image URL directly. Example: agent avatar URL from get_agent_info."
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Source image URL to proxy (image_proxy content type only, required). Downloads the external image and re-serves it via builder2 CDN with a permanent slug URL. Use for real-world images (product photos, stock photos) that can't be AI-generated."
+    },
+    "fallback_generation_prompt": {
+      "type": "string",
+      "description": "image_proxy only. Short topic description of what the image shows (e.g. 'bitcoin price surge, financial chart illustration'). Used ONLY when the source URL is dead (404/link rot) — the platform generates a replacement image with the configured fallback model instead of failing. Always provide this when proxying news images."
+    },
+    "aspect_ratio": {
+      "type": "string",
+      "description": "video_workflow only. '9:16' (vertical/TikTok/Shorts/Reels), '16:9' (landscape/YouTube), or '1:1' (square). Default 16:9.",
+      "enum": [
+        "9:16",
+        "16:9",
+        "1:1"
+      ]
+    },
+    "voice": {
+      "type": "string",
+      "description": "video_workflow only. Narrator voice: 'male'/'female' (language auto), Gemini personas (Charon=deep male CJK, Kore=female CJK, Puck=male EN, Aoede=female EN), or 'mandarin' (legacy=CJK female). For a male Chinese narrator use 'male' or 'charon'."
+    },
+    "with_character": {
+      "type": "boolean",
+      "description": "video_workflow only. true = the video stars your character: pass your avatar ONCE via character_image_url (from get_agent_info) and builder2 attaches it to every visual_prompt clip AND composes it into each scene server-side (image-edit). NO agent-side pre-production image generation needed — or allowed.",
+      "default": false
+    },
+    "clips": {
+      "type": "array",
+      "description": "video_workflow only (REQUIRED). The video timeline, in order — 2-10 clips, each 2-15s, total ≤90s. Per clip: duration (seconds, required), stock_query (free stock footage search — PREFERRED for real-world visuals), visual_prompt (AI video generation — for abstract/niche shots stock can't find), fallback_prompt (AI generation if stock comes up empty — ALWAYS provide with stock_query), tts_text (narration for that clip), tts_voice (per-clip voice override), subtitle (defaults to tts_text). See SKILL.md for timeline design rules.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "duration": {
+            "type": "number",
+            "description": "Clip length in seconds (2-15)"
+          },
+          "stock_query": {
+            "type": "string",
+            "description": "Free stock footage search query (2-4 generic visual words work best, e.g. 'ocean waves sunset')"
+          },
+          "visual_prompt": {
+            "type": "string",
+            "description": "AI video generation prompt (cinematic descriptors, mention 'vertical' for 9:16)"
+          },
+          "fallback_prompt": {
+            "type": "string",
+            "description": "AI generation prompt used when stock returns nothing"
+          },
+          "tts_text": {
+            "type": "string",
+            "description": "Narration text for this clip (keep ≤2.5 words per second of duration)"
+          },
+          "tts_voice": {
+            "type": "string",
+            "description": "Per-clip voice override"
+          },
+          "subtitle": {
+            "type": "string",
+            "description": "Burned subtitle text (defaults to tts_text). Use \"none\" to explicitly suppress (e.g. thumbnail/title cards whose artwork already has text)."
+          },
+          "image_url": {
+            "type": "string",
+            "description": "image_clip: URL of an existing image (PREFERRED — e.g. your featured/cover image, character portrait). Renders as a slow-motion image clip — free, instant, no video generation cost. Ideal for CTA/outro cards."
+          },
+          "image_prompt": {
+            "type": "string",
+            "description": "image_clip: generate the image with this prompt (when no image_url). One cheap image generation."
+          },
+          "motion": {
+            "type": "string",
+            "enum": [
+              "zoom_in",
+              "zoom_in_slow",
+              "zoom_out",
+              "zoom_out_slow",
+              "pan_up",
+              "fade_out",
+              "animate",
+              "none"
+            ],
+            "description": "image_clip motion preset. Default zoom_in. animate = AI-animates the still into a 5s ambient video (image_to_video model, fast 480p, ~8s) then ping-pong loops it seamlessly for the clip duration — perfect for cover art over music. fade_out = dissolve to black (outros)."
+          },
+          "subtitle_style": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "bold-caps",
+              "boxed",
+              "neon",
+              "minimal"
+            ],
+            "description": "Per-clip subtitle style override (default: top-level subtitle_style / clean)."
+          },
+          "transition": {
+            "type": "string",
+            "enum": [
+              "cut",
+              "fade",
+              "dissolve",
+              "fadeblack",
+              "fadewhite"
+            ],
+            "description": "Transition INTO this clip (audio_url mode ONLY — fades overlap clips and would desync narration). fade = crossfade, dissolve, fadeblack, fadewhite. Default cut."
+          },
+          "transition_duration": {
+            "type": "number",
+            "minimum": 0.3,
+            "maximum": 2.0,
+            "description": "Transition length in seconds (default 0.5). Clip durations are auto-extended so the final video still equals the audio length."
+          },
+          "color_grade": {
+            "type": "string",
+            "enum": [
+              "none",
+              "warm",
+              "cool",
+              "vintage",
+              "cinematic",
+              "bw"
+            ],
+            "description": "Color grading applied to this clip: warm, cool, vintage (faded warm), cinematic (contrasty teal-orange), bw (black & white). Default none."
+          },
+          "animate_prompt": {
+            "type": "string",
+            "description": "motion:animate only. Motion intent for the animation, e.g. 'woman sketches in notebook, sunlight shifts, leaves sway — seamless loop, ambient, no camera shake'. A loop hint is appended automatically if absent."
+          },
+          "character_image_url": {
+            "type": "string",
+            "description": "Per-clip reference image for image-to-video generation (character persistence) — normally use top-level with_character + character_image_url instead."
+          }
+        }
+      }
+    },
+    "page_url": {
+      "type": "string",
+      "description": "Webpage URL to screenshot (page_screenshot content type only, required). Renders the page via headless Chromium and captures a JPEG screenshot. Use for news article screenshots, source citations, proof of fact. Response includes source_page_url for attribution."
+    },
+    "slot_key": {
+      "type": "string",
+      "description": "Slot key for regenerate, get_slot actions."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model override. Music: 'suno-v5.5' (default — always use this) | legacy 'suno-v5' | 'suno-v4.5plus'. Images: any fal.ai model ID.",
+      "enum": [
+        "suno-v5.5",
+        "suno-v5",
+        "suno-v4.5plus",
+        "suno-v4.5"
+      ]
+    },
+    "custom_mode": {
+      "type": "boolean",
+      "description": "Music: enable custom mode for full control. In simple mode (default), prompt describes the song. In custom mode, prompt IS the lyrics. Use with style and title.",
+      "default": false
+    },
+    "style": {
+      "type": "string",
+      "description": "Music style tags for custom mode. Example: 'pop, upbeat, electronic, female vocals, 120bpm'"
+    },
+    "title": {
+      "type": "string",
+      "description": "Song title (music, custom mode only)"
+    },
+    "instrumental": {
+      "type": "boolean",
+      "description": "Music: generate instrumental only, no vocals (default: false)",
+      "default": false
+    },
+    "audio_url": {
+      "type": "string",
+      "description": "REQUIRED for content_type transcribe; also used by video_workflow. URL of an audio (or audio-bearing video) file to transcribe — any public MP3/WAV/M4A (e.g. a TTS output, a song, a podcast clip, an uploaded recording). Returns the full transcript with per-segment timestamps via the embed status 'transcript' field. For video_workflow, the audio becomes the timeline spine instead (no TTS, clips auto-fit to its duration, max 10 min)."
+    },
+    "subtitle_style": {
+      "type": "string",
+      "enum": [
+        "clean",
+        "bold-caps",
+        "boxed",
+        "neon",
+        "minimal"
+      ],
+      "default": "clean",
+      "description": "video_workflow only. Burned-subtitle ASS preset: clean (white+black outline), bold-caps (heavy, uppercase), boxed (caption card w/ dark box), neon (cyan/pink glow), minimal (small, unobtrusive). Per-clip override via clips[].subtitle_style."
+    },
+    "lyrics": {
+      "type": "object",
+      "description": "video_workflow + audio_url only. Vocal-synced lyric display: {text: full plain lyrics including [Verse]/[Chorus] tags} — backend transcribes the track (fal-ai/wizper) and fuzzy-aligns every line to WHEN it is sung (instrumental gaps stay empty); or {lrc: '[mm:ss.xx] timed lyrics'} used as-is (exact). Lyrics REPLACE per-clip subtitles.",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Plain untimed lyrics (section tags stripped automatically)."
+        },
+        "lrc": {
+          "type": "string",
+          "description": "LRC-format timed lyrics, exact times."
+        }
+      }
+    },
+    "video_type": {
+      "type": "string",
+      "enum": [
+        "narration",
+        "music_instrumental",
+        "music_vocal"
+      ],
+      "description": "video_workflow shortcut: music_instrumental with audio_url + cover_image_url (+ animate_prompt) auto-builds the single animated-cover clip — no clips[] needed."
+    },
+    "cover_image_url": {
+      "type": "string",
+      "description": "video_workflow + video_type=music_instrumental: cover image URL (or image_prompt) for the full-track animated cover clip."
+    },
+    "animate_prompt": {
+      "type": "string",
+      "description": "video_workflow + video_type=music_instrumental: motion intent for the animated cover (motion=animate; auto loop-hinted). Without it the cover gets zoom_in_slow."
+    },
+    "music": {
+      "type": [
+        "object",
+        "string",
+        "boolean"
+      ],
+      "description": "video_workflow only. Background music bed, auto-ducked under narration. Object {prompt:'warm acoustic', volume:0-1} (prompt = generated) or {url:'https://...'} (existing track); bare string = prompt ('upbeat electronic'). false = no music. DEFAULT: include for narration videos.",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "Music description; generated server-side."
+        },
+        "url": {
+          "type": "string",
+          "description": "Existing track URL."
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Bed level, default 0.45 (auto-ducked under narration)."
+        }
+      }
+    },
+    "narration_flow": {
+      "type": "boolean",
+      "default": true,
+      "description": "video_workflow only. Durations follow narration rhythm (TTS-first, no cut-off ever, punchier pacing). ALWAYS true for narration videos — the #1 quality rule. Omit only for fixed-duration timelines."
+    },
+    "image_prompt": {
+      "type": "string",
+      "description": "video_workflow + video_type=music_instrumental: generate the cover image (when no cover_image_url) — becomes the full-track animated/static cover clip."
+    },
+    "enable_stream": {
+      "type": "boolean",
+      "default": true,
+      "description": "video_workflow only. true = package the finished MP4 as HLS (stream-copy, ~1-2s) and serve the permanent URL as .m3u8 (adaptive streaming, no CF Stream cost). The MP4 is still uploaded (mp4_url in the response). false (default) = legacy .mp4 permanent URL."
+    },
+    "vocal_gender": {
+      "type": "string",
+      "enum": [
+        "male",
+        "female"
+      ],
+      "description": "video_workflow only. Gender hint for the narrator when voice is not set."
+    }
+  },
+  "required": [
+    "action"
+  ]
+}
