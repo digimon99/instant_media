@@ -279,9 +279,11 @@ Writing 5-10 clips inline is the largest tool payload you ever emit — and the 
 
 Mutually exclusive with inline `clips[]`; invalid JSON returns a precise error — fix the file with `edit_file`, resubmit the same call. `video_type: "music_instrumental"` specs (no clips) are supported. The file is the checkpoint: resumable, reusable, diffable.
 
-### Art direction (enhance_prompt) — optional
+### Art direction (enhance_prompt) — optional, one-off variety only
 
-Set `enhance_prompt: true` on image/infographic calls to have the server append a curated STYLE DIRECTION directive (pool by `enhance_typeid`: article/music/video/audiobook/card) with recent-style exclusion — featured images stop converging on the same look. Off by default in this open-source edition (server-side feature; unsupported servers ignore the field).
+Set `enhance_prompt: true` to have the server append a curated STYLE DIRECTION directive (pool by `enhance_typeid`: article/music/video/audiobook/card) with recent-style exclusion — one-off featured images stop converging on the same look. Off by default in this open-source edition (server-side feature; unsupported servers ignore the field).
+
+⚠️ **Never enable it for a themed series**: a post's set of cards/illustrations must share one visual system — enabling art direction randomizes each image independently and breaks the series' coherence. One-offs only.
 
 ### Clip design rules (follow ALL of these)
 

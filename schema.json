@@ -334,7 +334,7 @@
     },
     "enhance_prompt": {
       "type": "boolean",
-      "description": "image/infographic ONLY, OPTIONAL (default off in this open-source edition): set true to have the server append a curated style directive with recent-style exclusion (requires a Builder2 build with the art-direction feature; older servers ignore it)."
+      "description": "image/infographic ONLY, OPTIONAL (default off in this open-source edition): set true to have the server append a curated style directive with recent-style exclusion — for ONE-OFF featured images only. NEVER enable for a themed series (a post's card set must share one visual system; per-image randomization breaks it). Requires a Builder2 build with the art-direction feature; older servers ignore the field."
     },
     "enhance_typeid": {
       "type": "string",
