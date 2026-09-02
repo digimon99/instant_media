@@ -29,6 +29,49 @@ function slugify(text) {
 function actionGenerate(params) {
   var contentType = params.content_type || "image";
 
+  // video_file: full video_workflow spec from a workspace JSON file (same
+  // mechanism as blogpost_service article_file). The agent checkpoints
+  // video.json (clips, music, globals) and submits just the path, instead
+  // of emitting a giant schema-dense tool payload — the regime where
+  // models drop required fields. The file IS the spec: action +
+  // content_type stay from the call, everything else is replaced by the
+  // file's fields; downstream normalization runs unchanged.
+  if (params.video_file) {
+    if (params.clips) {
+      return { success: false, error: "pass EITHER video_file OR clips[] — not both (the file is the complete spec)" };
+    }
+    var vr = readFile(String(params.video_file));
+    if (!vr || !vr.ok) {
+      return { success: false, error: "Cannot read video_file '" + params.video_file + "': " + (vr && vr.error ? vr.error : "unknown error") };
+    }
+    var vspec;
+    try {
+      vspec = JSON.parse(String(vr.content));
+    } catch (e) {
+      return { success: false, error: "video_file '" + params.video_file + "' is not valid JSON: " + (e && e.message ? e.message : String(e)) + " — fix the file (watch trailing commas / unescaped quotes), then resubmit the same call" };
+    }
+    if (!vspec || typeof vspec !== "object" || Array.isArray(vspec)) {
+      return { success: false, error: "video_file must contain a JSON OBJECT with clips/music/globals — got " + (Array.isArray(vspec) ? "an array" : typeof vspec) };
+    }
+    var hasClips = !!(vspec.clips && vspec.clips.length);
+    var wrapperSpec = String(vspec.video_type || "") === "music_instrumental";
+    if (!hasClips && !wrapperSpec) {
+      return { success: false, error: "video_file '" + params.video_file + "' has no clips[] — the file must carry the complete timeline (or video_type 'music_instrumental' to auto-build the single cover clip)" };
+    }
+    var videoKeys = ["clips", "music", "aspect_ratio", "voice", "narration_flow", "merge_animate_audio",
+      "with_character", "audio_url", "subtitle_style", "lyrics", "video_type", "enable_stream",
+      "prompt", "title", "media_slug", "source_url", "count", "model", "custom_mode", "style",
+      "instrumental", "character_id", "character_slug", "character_image_url", "image_size",
+      "fallback_generation_prompt", "cover_image_url", "animate_prompt"];
+    for (var vi = 0; vi < videoKeys.length; vi++) {
+      delete params[videoKeys[vi]];
+      if (vspec[videoKeys[vi]] !== undefined) {
+        params[videoKeys[vi]] = vspec[videoKeys[vi]];
+      }
+    }
+    console.log("instant_media: video spec loaded from video_file '" + params.video_file + "' (" + String(vr.content).length + " bytes, " + (vspec.clips ? vspec.clips.length : 1) + " clips)");
+  }
+
   // Arg-drop leniency: for music, a `lyrics` field IS the prompt (custom
   // mode contract) — accept it when prompt is missing.
   if (contentType === "music" && !params.prompt && params.lyrics) {
@@ -200,6 +243,19 @@ function actionGenerate(params) {
 
   if ((contentType === "image" || contentType === "infographic") && params.image_size) {
     payload.image_size = String(params.image_size);
+  }
+
+  // Art direction (OPTIONAL in this open-source edition — pass-through):
+  // set enhance_prompt=true to have the server append a curated style
+  // directive with recent-style exclusion (requires a Builder2 build that
+  // supports enhance_prompt; older servers ignore the field harmlessly).
+  // The host platform stays neutral: nothing is sent unless the caller
+  // explicitly opts in.
+  if (contentType === "image" || contentType === "infographic") {
+    if (params.enhance_prompt === true) {
+      payload.enhance_prompt = true;
+      if (params.enhance_typeid) payload.enhance_typeid = String(params.enhance_typeid);
+    }
   }
 
   if (params.character_id) {

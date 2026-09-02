@@ -327,6 +327,18 @@
         "female"
       ],
       "description": "video_workflow only. Gender hint for the narrator when voice is not set."
+    },
+    "video_file": {
+      "type": "string",
+      "description": "video_workflow ONLY: workspace path to a video.json file carrying the COMPLETE spec (clips[], music, aspect_ratio, voice, narration_flow, merge_animate_audio, enable_stream, lyrics...). Preferred over inline clips[] for full videos — write the file, read it back once, submit this path. Mutually exclusive with clips[]."
+    },
+    "enhance_prompt": {
+      "type": "boolean",
+      "description": "image/infographic ONLY, OPTIONAL (default off in this open-source edition): set true to have the server append a curated style directive with recent-style exclusion (requires a Builder2 build with the art-direction feature; older servers ignore it)."
+    },
+    "enhance_typeid": {
+      "type": "string",
+      "description": "art-direction pool: article|music|video|audiobook|card."
     }
   },
   "required": [

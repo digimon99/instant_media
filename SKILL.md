@@ -269,6 +269,20 @@ You write a **clips[] array** — each clip is one visual shot with its narratio
  ]}
 ```
 
+### video_file — submit from a JSON file (PREFERRED for full videos)
+
+Writing 5-10 clips inline is the largest tool payload you ever emit — and the place models drop required fields. Instead: write the complete spec to a workspace `video.json` (clips, music, globals — everything except action/content_type), read it back once to verify, then submit the path:
+
+```json
+{"action": "generate", "content_type": "video_workflow", "video_file": "videos/myvideo/video.json"}
+```
+
+Mutually exclusive with inline `clips[]`; invalid JSON returns a precise error — fix the file with `edit_file`, resubmit the same call. `video_type: "music_instrumental"` specs (no clips) are supported. The file is the checkpoint: resumable, reusable, diffable.
+
+### Art direction (enhance_prompt) — optional
+
+Set `enhance_prompt: true` on image/infographic calls to have the server append a curated STYLE DIRECTION directive (pool by `enhance_typeid`: article/music/video/audiobook/card) with recent-style exclusion — featured images stop converging on the same look. Off by default in this open-source edition (server-side feature; unsupported servers ignore the field).
+
 ### Clip design rules (follow ALL of these)
 
 1. **Stock first, AI for the rest.** ~70-90% of shots in a typical short video are generic B-roll ("ocean waves", "city traffic", "office work") — free stock footage is instant, free, and looks real. Use `visual_prompt` ONLY for abstract/specific/branded shots stock can't find (a glowing coin over a skyline, a product hero shot).
