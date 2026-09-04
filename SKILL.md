@@ -50,6 +50,10 @@ Use `instant_media` whenever you need to generate an image and get back a URL. C
 - **Blog workflows**: Generate featured images and in-content images — use the URL in blogpost_service
 - **Any visual content**: Diagrams, thumbnails, cover art, social media graphics, infographics
 
+### Verifying a claimed job/URL — `job_info`, never `get_slot`
+
+To check whether a media job really exists (e.g. a cover image claimed in an earlier turn), call `instant_media job_info` with `job_id`. `get_slot` takes a **slot_key**, not a job id — passing a job id returns 404 and has caused agents to regenerate perfectly good media on a false negative. If `job_info` returns `status: completed` and the `permanent_url` serves, the media is REAL — stop verifying, never regenerate.
+
 ### Comparison with other image tools
 
 | Tool | Returns | Speed | Best for |

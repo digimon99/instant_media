@@ -474,6 +474,48 @@ function actionListSlots() {
   }
 }
 
+// actionJobInfo — verify a media job BY JOB ID (the truthful check for
+// "does this job/URL exist?"). get_slot takes a slot_KEY, not a job id —
+// passing a job id there 404s and has sent agents into verification
+// spirals where they regenerated perfectly good media. GET /jobs/{job_id}
+// returns status + variant URLs.
+function actionJobInfo(params) {
+  if (!params.job_id) {
+    return { success: false, error: "job_id is required for job_info action" };
+  }
+  var resp;
+  try {
+    resp = fetchJSON(BASE_URL + "/api/v1/jobs/" + encodeURIComponent(params.job_id), authHeaders());
+  } catch (e) {
+    return { success: false, job_id: params.job_id, exists: false, error: "job not found: " + String(e.message || e) };
+  }
+  if (!resp) {
+    return { success: false, job_id: params.job_id, exists: false, error: "empty response" };
+  }
+  var j = resp.job || resp;
+  // slots arrives as { "0": [ {preview_url, content_type, ...} ] } — the
+  // variant URLs ARE the media (jobs without media_slug have no separate
+  // permanent_url field).
+  var variantURL = "";
+  if (j.slots && typeof j.slots === "object") {
+    for (var k in j.slots) {
+      var arr = j.slots[k];
+      if (arr && arr.length && arr[0].preview_url) { variantURL = arr[0].preview_url; break; }
+    }
+  }
+  return {
+    success: true,
+    exists: true,
+    job_id: params.job_id,
+    status: j.status,
+    content_type: j.content_type,
+    media_slug: j.media_slug || null,
+    permanent_url: j.permanent_url || variantURL,
+    created_at: j.created_at,
+    note: "Job exists server-side. If status=completed, the media is REAL — do not regenerate it. Use permanent_url (or the variant URL) when embedding."
+  };
+}
+
 function actionGetSlot(params) {
   if (!params.slot_key) {
     return { success: false, error: "slot_key is required for get_slot action" };
@@ -533,6 +575,10 @@ switch (action) {
 
   case "list_slots":
     result = actionListSlots();
+    break;
+
+  case "job_info":
+    result = actionJobInfo(input);
     break;
 
   case "get_slot":

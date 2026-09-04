@@ -339,6 +339,10 @@
     "enhance_typeid": {
       "type": "string",
       "description": "art-direction pool: article|music|video|audiobook|card."
+    },
+    "job_id": {
+      "type": "string",
+      "description": "job_info action: verify a media job exists by its job_id (returns status + permanent_url). Use THIS to verify claimed job IDs — NOT get_slot (which takes a slot_key and 404s on job ids)."
     }
   },
   "required": [
