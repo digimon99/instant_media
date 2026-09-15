@@ -6,24 +6,82 @@ description: >-
 > **Parallel calls are ALLOWED and encouraged** (fire-and-forget — submit cover + music
 > + images in one batch). ONE rule: EVERY call must carry its COMPLETE payload — full
 > `prompt` (the actual lyrics/concept text, never a short label) and `content_type`.
-> If a call returns "prompt is required", re-issue ONE corrected call with the full
-> payload — never re-emit the whole batch. (`action` defaults to `generate` when omitted.)
-  The preferred tool for ALL media generation: avatars, banners, featured images, illustrations,
+> **Validation errors (missing/invalid fields, e.g. "prompt is required"): retry up to 3
+> attempts total** — each retry must FIX the quoted error, never blind-repeat; re-issue the
+> corrected call alone, never the whole batch. Failed/invalid submits create no job and cost
+> nothing. ⚠️ This retry headroom is for VALIDATION errors only — 5xx/"Unexpected response"
+> outage signatures stay on the strict discipline (ONE same-payload retry, then STOP). (`action`
+> omitted + generation fields present = forwarded as a generate automatically; a bare call
+> with no generate fields defaults to read-only `list_slots` and never bills.)
+  ## 📻 AUDIOBOOK — manifest-first audio programs (news briefs, learning, documentaries)
+
+`content_type: "audiobook"` generates a full-length MP3 (TTS narration spine + optional
+sidechain-ducked music bed) plus a timed JSON manifest. The client renders slideshow +
+subtitles synced to the audio: radio with the screen locked, watch-mode in public spaces.
+
+**Submit** (PREFERRED: checkpoint `audiobook.json` then pass `audiobook_file` — video_file pattern):
+```json
+{"action": "generate", "content_type": "audiobook", "audiobook_file": "blogs/{date}-{slug}/audiobook.json",
+ "media_slug": "{post-slug}-audio", "title": "…"}
+```
+`audiobook.json` spec:
+```json
+{"category": "newscast", "voice": "Charon", "title": "Morning Brief",
+ "cover_url": "https://…", "music": {"prompt": "soft ambient bed", "volume": 0.25},
+ "clips": [{"tts_text": "…", "image_url": "https://…", "title": "Markets", "kind": "hook|segment|outro"}]}
+```
+- `category`: free-form editorial class — `newscast|documentary|learning|story` suggested; players may style by it
+- clip images: URL passthrough (generate decks first via instant_media + `{post-slug}-cover/-slide-N` slug convention — then list_slots recovery applies to audiobooks too)
+- music: `{url}` (preferred) or `{prompt}` (generated bed, ducked under narration); omit = narration only
+
+**Receipt** (fire-and-forget — placeholder manifest serves instantly):
+- `url` = permanent manifest URL `…/w/a/{slug}/{job}.json` — publish THIS
+- `audio_url` = full-length `…/{job}/full.mp3`
+- manifest on completion: `status`, `duration`, `audio_url`, `clips[]` each with `start`/`end`/`image_url`/`kind` + nested `subtitles[]` (`start`/`end`/`text`, 2-decimal timestamps). Absolute times — ad injection later = clip-level manifest op.
+- caps: ≤120 clips, ≤30 min total; regeneration reuses content-hashed TTS trunks (edit one clip → only that clip re-bills)
+
+## 🔄 RECOVERY — interrupted run? list_slots FIRST (before regenerating anything)
+
+Media on builder2 is DURABLE: every generated slot persists server-side and outlives
+any agent session, LLM crash, or lost checkpoint. If you are resuming an interrupted
+run (or simply don't know what already exists):
+
+1. Call `{"action": "list_slots", "media_slug": "<post-prefix>"}` — e.g. the deck above
+   used `adjacent-possible-cn-*` slugs, so `media_slug: "adjacent-possible-cn"` recovers
+   all 7 cards in ONE call (cover, slides, CTA — each row has `job_id`, `media_slug`,
+   `status`, and `active_variant.preview_url`).
+2. No slug convention? Call `list_slots` without filter — the shared gallery lists
+   everything recent; match by prompt keywords + created_at date. The gallery is
+   SHARED across posts — exclude unrelated media deliberately.
+3. Rebuild your checkpoint files (images.json / clips.json) FROM the recovered rows,
+   then continue the workflow — publish does not depend on how you learned the URLs.
+
+⛔ NEVER regenerate media you cannot prove is missing — a `status: "ready"` slot with a
+matching slug IS the media. Regeneration re-bills and forks the permanent URL history.
+(Real case 2026-09-06: a video workflow died after generating 7/7 deck cards; the
+resumed agent assumed "nothing was generated" and nearly re-billed the whole deck
+until a manual list_slots recovered all seven.)
+
+**media_slug convention**: use per-post prefixes — `{post-slug}-cover`, `{post-slug}-slide-1`,
+`{post-slug}-cta`, `{post-slug}-video` — so recovery is one filtered call, deterministic,
+no prompt matching.
+
+The preferred tool for ALL media generation: avatars, banners, featured images, illustrations,
   thumbnails, diagrams, logos, songs, or any visual/audio content. Returns embed_markdown and embed_html.
   The URL is live immediately (placeholder while generating, real content in ~5-90s depending on type).
-  For music: supports simple mode (describe song) and custom mode (write lyrics + style tags). Models: suno-v5.5 (default), suno-v5, suno-v4.5plus (legacy).
+  For music: supports simple mode (describe song) and custom mode (write lyrics + style tags). Models: **suno-v5.5** (default) and **mureka-v9.5** (Chinese-optimized, lyric-to-song only, 1 variant per request, per-song billing). ⛔ `suno-v5`/`suno-v4.5plus`/`suno-v4.5` are RETIRED — never send them.
 permissions:
   - fetch
   - log
   - env
 is_enabled: true
 ---
-
-# instant_media
-
 > **Open-source edition** — point at any Builder2 instance with `BUILDER2_BASE_URL`
 > (default `https://api.builder2.com`) and authenticate with `BUILDER2_API_KEY`
-> (your key, prefix `bk2_`).
+> (a `bk2_…` API key; self-hosted servers accept their own keys).
+
+
+# instant_media
 
 Generate media (images, video, TTS, music) via builder2.com's permanent CDN slot API. Returns a **permanent CDN URL** immediately (~50ms) — the URL is live instantly and serves the generated content once ready.
 
@@ -49,10 +107,6 @@ Use `instant_media` whenever you need to generate an image and get back a URL. C
 - **Channel/Blog setup**: User needs an avatar or banner image — generate and provide the URL
 - **Blog workflows**: Generate featured images and in-content images — use the URL in blogpost_service
 - **Any visual content**: Diagrams, thumbnails, cover art, social media graphics, infographics
-
-### Verifying a claimed job/URL — `job_info`, never `get_slot`
-
-To check whether a media job really exists (e.g. a cover image claimed in an earlier turn), call `instant_media job_info` with `job_id`. `get_slot` takes a **slot_key**, not a job id — passing a job id returns 404 and has caused agents to regenerate perfectly good media on a false negative. If `job_info` returns `status: completed` and the `permanent_url` serves, the media is REAL — stop verifying, never regenerate.
 
 ### Comparison with other image tools
 
@@ -230,7 +284,7 @@ Generate AI music via Suno. Returns a permanent MP3 URL immediately (silent plac
 
 ### Simple Mode (describe the song)
 ```json
-{"action": "generate", "content_type": "music", "prompt": "A cheerful summer pop song about road trips and adventure", "model": "suno-v4.5"}
+{"action": "generate", "content_type": "music", "prompt": "A cheerful summer pop song about road trips and adventure"}
 ```
 
 ### Custom Mode (write lyrics + control style)
@@ -247,7 +301,7 @@ Generate AI music via Suno. Returns a permanent MP3 URL immediately (silent plac
 
 | Parameter | Description |
 |-----------|-------------|
-| `model` | `suno-v5.5` (default — always use this), or legacy `suno-v5` / `suno-v4.5plus` |
+| `model` | `suno-v5.5` (default — 2 variants) or `mureka-v9.5` (Chinese/Cantonese-optimized lyric-to-song; requires custom_mode + full lyrics; exactly 1 variant, per-song billing — set count 1, never re-request for a second variant). Legacy suno ids are RETIRED. **Verify the receipt `requested_model` AND `model` fields both match what you intended** — a `model_mismatch` warning means your call carried the wrong string (real incidents 2026-09-03 AND 2026-09-05: agents copied the example model while intending the other — 4 jobs billed wrong). On mismatch: re-emit ONE corrected call, model string copied verbatim from YOUR workflow skill, never from this example. |
 | `custom_mode` | `true` = prompt IS the lyrics. `false` (default) = prompt describes the song |
 | `style` | Style tags for custom mode (e.g., "pop, electronic, female vocals") |
 | `title` | Song title (custom mode only) |
@@ -273,21 +327,26 @@ You write a **clips[] array** — each clip is one visual shot with its narratio
  ]}
 ```
 
+### Verifying a claimed job/URL — `job_info`, never `get_slot`
+
+To check whether a media job really exists (e.g. a cover image claimed in an earlier turn), call `instant_media job_info` with `job_id`. `get_slot` takes a **slot_key**, not a job id — passing a job id returns 404 and has caused agents to regenerate perfectly good media on a false negative (2026-09-03 cover incident). If `job_info` returns `status: completed` and the `permanent_url` serves, the media is REAL — stop verifying, never regenerate.
+
+### Art direction (enhance_prompt) — one-off variety, never series
+
+`image` generations default `enhance_prompt: true` (builder2 appends a curated STYLE DIRECTION + excludes your last 5 styles — no more teal-orange sameness on one-off featured images). **`infographic` defaults FALSE**: a post's set of text cards must share one visual system — per-card randomization breaks the series (abc_explores incident, 2026-09-02). Set `enhance_prompt: true` on an infographic ONLY for a deliberate one-off. Any themed SERIES of images (episode decks, matching card sets) should pass `enhance_prompt: false` on every call. Character-mode generations are never styled. The receipt echoes `design_style` — quote it in run reports.
+
 ### video_file — submit from a JSON file (PREFERRED for full videos)
 
-Writing 5-10 clips inline is the largest tool payload you ever emit — and the place models drop required fields. Instead: write the complete spec to a workspace `video.json` (clips, music, globals — everything except action/content_type), read it back once to verify, then submit the path:
+Writing 5-10 clips inline is the single largest tool payload you ever emit — and the place models drop required fields (`music`, `merge_animate_audio`…). Instead:
 
+1. **Write the spec to `workspace/videos/{name}/video.json`** — the COMPLETE submission: `prompt`, `clips[]`, `music`, `aspect_ratio`, `voice`, `narration_flow`, `merge_animate_audio`, `enable_stream`, `subtitle_style`, `lyrics`, `audio_url`, `title`, `source_url` — everything except `action`/`content_type`.
+2. **Read it back once** (`read_file`) to verify it parsed and has every required field.
+3. **Submit the path**:
 ```json
-{"action": "generate", "content_type": "video_workflow", "video_file": "videos/myvideo/video.json"}
+{"action": "generate", "content_type": "video_workflow", "video_file": "videos/techminute/video.json"}
 ```
 
-Mutually exclusive with inline `clips[]`; invalid JSON returns a precise error — fix the file with `edit_file`, resubmit the same call. `video_type: "music_instrumental"` specs (no clips) are supported. The file is the checkpoint: resumable, reusable, diffable.
-
-### Art direction (enhance_prompt) — optional, one-off variety only
-
-Set `enhance_prompt: true` to have the server append a curated STYLE DIRECTION directive (pool by `enhance_typeid`: article/music/video/audiobook/card) with recent-style exclusion — one-off featured images stop converging on the same look. Off by default in this open-source edition (server-side feature; unsupported servers ignore the field).
-
-⚠️ **Never enable it for a themed series**: a post's set of cards/illustrations must share one visual system — enabling art direction randomizes each image independently and breaks the series' coherence. One-offs only.
+Rules: mutually exclusive with inline `clips[]` (pick one); the file fully replaces the video spec (call-level `action`/`content_type` still apply); invalid JSON or missing `clips[]` returns a precise error — fix the file with `edit_file`, resubmit the same call. Validation-failure repairs are one-field edits, never full payload re-emissions. The file is also the checkpoint: resumable, reusable for regenerate, diffable.
 
 ### Clip design rules (follow ALL of these)
 

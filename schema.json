@@ -3,13 +3,15 @@
   "properties": {
     "action": {
       "type": "string",
-      "description": "Action to perform: generate (create new media), regenerate (new image at existing slot URL), list_slots (list all slots), get_slot (get slot details)",
+      "description": "Action to perform. DEFAULT (when omitted): list_slots — a bare/field-dropped call is read-only, never bills. list_slots: list your media slots (pass media_slug as a prefix filter, e.g. media_slug of a post deck, to recover a whole set in one call). RECOVERY FIRST: when resuming an interrupted/unknown-state run, call list_slots BEFORE generating — builder2 media is durable and recoverable by media_slug/prompt; do NOT regenerate what you cannot prove is missing. generate: create new media (bills per generation). regenerate: new image at an existing slot URL. get_slot: slot details by slot_key. job_info: verify a job by job_id (status + URLs).",
       "enum": [
+        "list_slots",
         "generate",
         "regenerate",
-        "list_slots",
-        "get_slot"
-      ]
+        "get_slot",
+        "job_info"
+      ],
+      "default": "list_slots"
     },
     "prompt": {
       "type": "string",
@@ -17,7 +19,7 @@
     },
     "content_type": {
       "type": "string",
-      "description": "Type of media to generate. Default: image. 'infographic' uses an optimal model for data-driven infographic visuals. 'image_proxy' downloads and re-serves an external image via builder2 CDN (requires image_url). 'page_screenshot' renders a webpage via headless Chromium and captures a screenshot (requires page_url). 'transcribe' transcribes an audio/video URL to text with timestamps (requires audio_url).",
+      "description": "Type of media to generate. Default: image. 'infographic' uses an optimal model for data-driven infographic visuals. 'image_proxy' downloads and re-serves an external image via builder2 CDN (requires image_url). 'page_screenshot' renders a webpage via headless Chromium and captures a screenshot (requires page_url). 'transcribe' transcribes an audio/video URL to text with timestamps (requires audio_url). 'audiobook' = manifest-first audio program: clips[] (tts_text + image_url each), optional music bed + voice + category (newscast|documentary|learning|story); receipt url = timed JSON manifest (placeholder from t=0), audio_url = full-length mp3.",
       "enum": [
         "image",
         "infographic",
@@ -27,13 +29,14 @@
         "video_workflow",
         "tts",
         "music",
-        "transcribe"
+        "transcribe",
+        "audiobook"
       ],
       "default": "image"
     },
     "media_slug": {
       "type": "string",
-      "description": "URL-friendly name for the media (auto-slugified from prompt if omitted). Used to construct the permanent CDN URL."
+      "description": "URL-friendly name for the media (auto-slugified from prompt if omitted). Constructs the permanent CDN URL. Use meaningful per-post prefixes (e.g. adjacent-possible-cn-cover, adjacent-possible-cn-slide-1) so one filtered list_slots call recovers the whole deck after an interrupted run."
     },
     "count": {
       "type": "integer",
@@ -209,12 +212,10 @@
     },
     "model": {
       "type": "string",
-      "description": "Model override. Music: 'suno-v5.5' (default — always use this) | legacy 'suno-v5' | 'suno-v4.5plus'. Images: any fal.ai model ID.",
+      "description": "Music engine: suno-v5.5 (default, 2 variants) or mureka-v9.5 (Chinese/Cantonese-optimized lyric-to-song; custom_mode + full lyrics REQUIRED; 1 variant, per-song billing). Type the string EXACTLY — never copy an example's model when your workflow specifies another.",
       "enum": [
         "suno-v5.5",
-        "suno-v5",
-        "suno-v4.5plus",
-        "suno-v4.5"
+        "mureka-v9.5"
       ]
     },
     "custom_mode": {
@@ -334,18 +335,20 @@
     },
     "enhance_prompt": {
       "type": "boolean",
-      "description": "image/infographic ONLY, OPTIONAL (default off in this open-source edition): set true to have the server append a curated style directive with recent-style exclusion — for ONE-OFF featured images only. NEVER enable for a themed series (a post's card set must share one visual system; per-image randomization breaks it). Requires a Builder2 build with the art-direction feature; older servers ignore the field."
+      "description": "image: default TRUE via this tool (one-off featured-image variety, per-caller recent-style exclusion); infographic: default FALSE — series of themed text cards must stay visually coherent, set true only for a deliberate one-off. Pass false for exact prompt fidelity. Never applies to character-mode generations."
     },
     "enhance_typeid": {
       "type": "string",
-      "description": "art-direction pool: article|music|video|audiobook|card."
+      "description": "art-direction pool: article|music|video|audiobook|card (infographic defaults to card). Inferred from slug (thumb/cover/hero/featured) when omitted."
     },
     "job_id": {
       "type": "string",
       "description": "job_info action: verify a media job exists by its job_id (returns status + permanent_url). Use THIS to verify claimed job IDs — NOT get_slot (which takes a slot_key and 404s on job ids)."
+    },
+    "audiobook_file": {
+      "type": "string",
+      "description": "Workspace path to audiobook.json carrying the complete spec (clips[], music, voice, category, title, cover_url) — PREFERRED over inline clips (big-payload field-drop avoidance, video_file pattern)."
     }
   },
-  "required": [
-    "action"
-  ]
+  "required": []
 }

@@ -3,9 +3,25 @@
 // Response includes embed_markdown and embed_html for easy embedding.
 // Perfect for blog featured images, post media, or any case needing an image URL.
 
-// Open-source edition: works against https://api.builder2.com by default,
-// or any self-hosted Builder2 instance via BUILDER2_BASE_URL.
+// Dual-host (2026-09-11 PhonkNation incident: api.builder2.com edge dropped
+// POSTs entirely — zero jobs at origin — while www.builder2.com served fine
+// in the same minutes). Generate/media calls try each host once.
+// Open-source edition: point at any Builder2 instance via BUILDER2_BASE_URL
+// (default https://api.builder2.com). The dual-host failover only applies to
+// the default SaaS hosts — a self-hosted override has no www-alt.
 var BASE_URL = (env && env.BUILDER2_BASE_URL) ? String(env.BUILDER2_BASE_URL).trim().replace(/\/$/, "") : "https://api.builder2.com";
+var BASE_URL_ALT = (BASE_URL === "https://api.builder2.com") ? "https://www.builder2.com" : BASE_URL;
+function postBuildMedia(payload, headers) {
+  try {
+    return fetchJSONPost(BASE_URL + "/api/v1/build-media", payload, headers);
+  } catch (e) {
+    var msg = String(e);
+    if (/empty response body|http error 5|http error 52|timeout|connection/i.test(msg)) {
+      return fetchJSONPost(BASE_URL_ALT + "/api/v1/build-media", payload, headers);
+    }
+    throw e;
+  }
+}
 
 var apiKey = env && env.BUILDER2_API_KEY ? String(env.BUILDER2_API_KEY).trim() : "";
 
@@ -29,13 +45,15 @@ function slugify(text) {
 function actionGenerate(params) {
   var contentType = params.content_type || "image";
 
-  // video_file: full video_workflow spec from a workspace JSON file (same
-  // mechanism as blogpost_service article_file). The agent checkpoints
-  // video.json (clips, music, globals) and submits just the path, instead
-  // of emitting a giant schema-dense tool payload — the regime where
-  // models drop required fields. The file IS the spec: action +
-  // content_type stay from the call, everything else is replaced by the
-  // file's fields; downstream normalization runs unchanged.
+  // video_file: full video_workflow spec from a workspace JSON file — the
+  // same mechanism as blogpost_service article_file (Steve-approved
+  // 2026-09-01). The agent checkpoints video.json (clips, music, globals)
+  // and submits just the path, instead of emitting a giant schema-dense
+  // tool payload — the exact regime where models drop required fields
+  // (music/merge_animate_audio/lyrics-stub incidents). The file IS the
+  // spec: action + content_type stay from the call, everything else is
+  // replaced by the file's fields; downstream normalization (clips
+  // mapping, music/lyrics parsing) runs unchanged on the merged params.
   if (params.video_file) {
     if (params.clips) {
       return { success: false, error: "pass EITHER video_file OR clips[] — not both (the file is the complete spec)" };
@@ -69,7 +87,40 @@ function actionGenerate(params) {
         params[videoKeys[vi]] = vspec[videoKeys[vi]];
       }
     }
-    console.log("instant_media: video spec loaded from video_file '" + params.video_file + "' (" + String(vr.content).length + " bytes, " + (vspec.clips ? vspec.clips.length : 1) + " clips)");
+    console.log("instant_media: video spec loaded from video_file '" + params.video_file + "' (" + String(vr.content).length + " bytes, " + vspec.clips.length + " clips)");
+  }
+
+  // audiobook_file: full audiobook spec from a workspace JSON file — the
+  // video_file mechanism applied to audiobooks. The agent checkpoints
+  // audiobook.json (clips, music, voice, category) and submits the path.
+  if (params.audiobook_file) {
+    if (params.clips) {
+      return { success: false, error: "pass EITHER audiobook_file OR clips[] — not both (the file is the complete spec)" };
+    }
+    var ar = readFile(String(params.audiobook_file));
+    if (!ar || !ar.ok) {
+      return { success: false, error: "Cannot read audiobook_file '" + params.audiobook_file + "': " + (ar && ar.error ? ar.error : "unknown error") };
+    }
+    var aspec;
+    try {
+      aspec = JSON.parse(String(ar.content));
+    } catch (e) {
+      return { success: false, error: "audiobook_file '" + params.audiobook_file + "' is not valid JSON: " + (e && e.message ? e.message : String(e)) };
+    }
+    if (!aspec || typeof aspec !== "object" || Array.isArray(aspec)) {
+      return { success: false, error: "audiobook_file must contain a JSON OBJECT with clips[] — got " + (Array.isArray(aspec) ? "an array" : typeof aspec) };
+    }
+    if (!aspec.clips || !aspec.clips.length) {
+      return { success: false, error: "audiobook_file '" + params.audiobook_file + "' has no clips[] — each clip needs tts_text + image_url" };
+    }
+    var abKeys = ["clips", "music", "voice", "category", "title", "cover_url", "prompt", "media_slug"];
+    for (var ai = 0; ai < abKeys.length; ai++) {
+      delete params[abKeys[ai]];
+      if (aspec[abKeys[ai]] !== undefined) {
+        params[abKeys[ai]] = aspec[abKeys[ai]];
+      }
+    }
+    console.log("instant_media: audiobook spec loaded from audiobook_file '" + params.audiobook_file + "' (" + String(ar.content).length + " bytes, " + aspec.clips.length + " clips)");
   }
 
   // Arg-drop leniency: for music, a `lyrics` field IS the prompt (custom
@@ -78,8 +129,11 @@ function actionGenerate(params) {
     params.prompt = typeof params.lyrics === "string" ? params.lyrics : params.prompt;
   }
 
-  if (contentType !== "image_proxy" && contentType !== "page_screenshot" && contentType !== "transcribe" && !params.prompt) {
+  if (contentType !== "image_proxy" && contentType !== "page_screenshot" && contentType !== "transcribe" && contentType !== "audiobook" && !params.prompt) {
     return { success: false, error: "prompt is required for generate action" };
+  }
+  if (contentType === "audiobook" && !params.clips) {
+    return { success: false, error: "clips[] is required for audiobook (each clip: tts_text + image_url) — or pass audiobook_file with the complete spec" };
   }
   if (contentType === "image_proxy" && !params.image_url) {
     return { success: false, error: "image_url is required for image_proxy content type" };
@@ -104,7 +158,7 @@ function actionGenerate(params) {
     prompt: String(params.prompt || ""),
     content_type: contentType,
     media_slug: slug,
-    count: (contentType === "image_proxy" || contentType === "page_screenshot" || contentType === "transcribe") ? 1 : count
+    count: (contentType === "image_proxy" || contentType === "page_screenshot" || contentType === "transcribe" || contentType === "audiobook") ? 1 : count
   };
 
   // transcribe: audio_url is the payload (prompt is cosmetic/label only).
@@ -241,20 +295,60 @@ function actionGenerate(params) {
     }
   }
 
+  // audiobook: TTS spine + timed manifest (clips with images + nested
+  // subtitle events; optional ducked music bed). Receipt `url` = manifest
+  // permanent URL (.json, placeholder from t=0); `audio_url` = full.mp3.
+  if (contentType === "audiobook") {
+    payload.count = 1;
+    if (params.voice) payload.voice = String(params.voice);
+    if (params.category) payload.category = String(params.category);
+    if (params.title) payload.title = String(params.title);
+    if (params.cover_url) payload.cover_url = String(params.cover_url);
+    var abMusic = params.music;
+    if (typeof abMusic === "string") {
+      try { abMusic = JSON.parse(abMusic); } catch (e) { abMusic = null; }
+    }
+    if (abMusic && typeof abMusic === "object") {
+      payload.music = abMusic;
+    } else if (typeof params.music === "string" && params.music.trim()) {
+      payload.music = { prompt: params.music.trim() };
+    }
+    var abClips = params.clips;
+    if (typeof abClips === "string") {
+      try { abClips = JSON.parse(abClips); } catch (e) { abClips = null; }
+    }
+    if (abClips && typeof abClips === "object" && abClips.length) {
+      payload.clips = abClips.map(function (c) {
+        return {
+          tts_text: c.tts_text ? String(c.tts_text) : "",
+          image_url: c.image_url ? String(c.image_url) : "",
+          title: c.title ? String(c.title) : "",
+          kind: c.kind ? String(c.kind) : ""
+        };
+      });
+    }
+  }
+
   if ((contentType === "image" || contentType === "infographic") && params.image_size) {
     payload.image_size = String(params.image_size);
   }
 
-  // Art direction (OPTIONAL in this open-source edition — pass-through):
-  // set enhance_prompt=true to have the server append a curated style
-  // directive with recent-style exclusion (requires a Builder2 build that
-  // supports enhance_prompt; older servers ignore the field harmlessly).
-  // The host platform stays neutral: nothing is sent unless the caller
-  // explicitly opts in.
+  // Featured-image art direction (2026-09-02; revised same day): builder2
+  // is neutral by default; THIS tool layer opts ONE-OFF featured images IN
+  // so they stop converging on the model-default teal-orange dark-moody
+  // look. Scope narrowed after the Ollie incident: infographic SERIES
+  // (text cards that must share one visual system per episode/post —
+  // abc_explores, teaching decks) got randomized card-by-card and broke
+  // coherence. Rule now: content_type image → enhance ON by default
+  // (character jobs are still server-refused); infographic → OFF by
+  // default, ON only when the caller explicitly sets enhance_prompt=true
+  // (a deliberate one-off variety pick). Explicit false always wins.
   if (contentType === "image" || contentType === "infographic") {
+    // Open-source edition: opt-in pass-through — set enhance_prompt=true to
+    // have the server append a curated style directive (SaaS feature; older
+    // or self-hosted servers ignore the field harmlessly).
     if (params.enhance_prompt === true) {
       payload.enhance_prompt = true;
-      if (params.enhance_typeid) payload.enhance_typeid = String(params.enhance_typeid);
     }
   }
 
@@ -316,7 +410,7 @@ function actionGenerate(params) {
   }
 
   try {
-    var resp = fetchJSONPost(BASE_URL + "/api/v1/build-media", payload, authHeaders());
+    var resp = postBuildMedia(payload, authHeaders());
 
     if (resp && resp.permanent_url) {
       // transcribe sync path: server waited and the transcript is INLINE —
@@ -376,6 +470,8 @@ function actionGenerate(params) {
         default_variant_index: resp.default_variant_index !== undefined ? resp.default_variant_index : 1,
         status: resp.status || "generating",
         model: resp.model || "",
+        requested_model: (params.model ? String(params.model) : ""),
+        image_size_used: payload.image_size || "",
         mode: resp.mode || "standard",
         custom_mode: resp.custom_mode || false,
         source_url: resp.source_url || "",
@@ -385,8 +481,19 @@ function actionGenerate(params) {
         embed_html: resp.embed_html || "",
         message: baseMessage
       };
+      if (contentType === "music" && params.model && resp.model) {
+        var reqM = String(params.model).trim();
+        var ranM = String(resp.model).trim();
+        var uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (reqM && ranM && reqM !== ranM && !uuidRe.test(reqM)) {
+          result.warning = "model_mismatch: you requested '" + reqM + "' but the job ran on '" + ranM + "' — your tool call carried the WRONG model string (you likely copied the example's model). Re-emit ONE corrected call with model: \"" + reqM + "\" copied verbatim; do NOT copy the SKILL.md example model. 2026-09-05 incident: 4 jobs billed this way.";
+        }
+      }
       if (characterModeInPrompt) {
         result.warning = "character_mode_missing: 'mode:character' was written in the prompt text but no character_slug/character_image_url was supplied — image contains NO character likeness. Re-submit with character_slug.";
+      }
+      if ((contentType === "image" || contentType === "infographic") && !payload.image_size) {
+        result.warning = (result.warning ? result.warning + " | " : "") + "image_size_missing: you omitted image_size, so the server chose its DEFAULT ORIENTATION — if your workflow needs portrait/vertical, this image is now WRONG. Re-emit ONE corrected call with image_size: \"portrait_16_9\" (2026-09-08 Cindy travel-gallery incident: 3 landscape photos published from field-dropped parallel calls).";
       }
       if (ttsMix) {
         result.warning = (result.warning ? result.warning + " | " : "") + "tts_language_mix: mandarin clips " + JSON.stringify(ttsMix.mandarin_idx || []) + " vs cantonese clips " + JSON.stringify(ttsMix.cantonese_idx || []) + " — accents will switch mid-video; rewrite tts_text in ONE written language and re-submit.";
@@ -394,10 +501,14 @@ function actionGenerate(params) {
       }
       return result;
     } else {
+      // Raw response rides INSIDE the error string so the model cannot
+      // drop it from its report (Tiffany 2026-09-13: "Unexpected response"
+      // twice with no builder2 job = unclassifiable 2xx body).
       return {
         success: false,
-        error: (resp && resp.error) ? resp.error : "Unexpected response from builder2 API",
-        raw: JSON.stringify(resp).substring(0, 500)
+        error: (resp && resp.error) ? resp.error :
+          "Unexpected response from builder2 API — no job was created (nothing billed). This is the edge-blip signature: the generate never reached builder2 or the response was not a receipt. Raw response: " + JSON.stringify(resp).substring(0, 300),
+        hint: "ONE same-payload retry is correct; if it fails again: checkpoint + STOP per outage discipline. NEVER a third attempt or diagnostic variants."
       };
     }
   } catch (e) {
@@ -439,7 +550,8 @@ function actionRegenerate(params) {
     } else {
       return {
         success: false,
-        error: (resp && resp.error) ? resp.error : "Unexpected response from builder2 API"
+        error: (resp && resp.error) ? resp.error :
+          "Unexpected response from builder2 API — no job was created. Raw response: " + JSON.stringify(resp).substring(0, 300)
       };
     }
   } catch (e) {
@@ -450,20 +562,44 @@ function actionRegenerate(params) {
   }
 }
 
-function actionListSlots() {
+function actionListSlots(params) {
+  params = params || {};
   try {
-    var resp = fetchJSON(BASE_URL + "/api/v1/slots", authHeaders());
+    // media_slug prefix filter: one call recovers a whole post deck when
+    // slugs follow the per-post prefix convention. Without it the gallery
+    // is SHARED across all posts — match by slug, not prompt archaeology.
+    var url = BASE_URL + "/api/v1/slots?limit=50";
+    var slug = params.media_slug ? String(params.media_slug).trim() : "";
+    if (slug) {
+      url += "&media_slug=" + encodeURIComponent(slug);
+    }
+    var resp = fetchJSON(url, authHeaders());
 
+    // slots:null + total present = a VALID EMPTY LISTING (e.g. a
+    // media_slug filter with zero matches) — not an error (Tiffany
+    // 2026-09-14: an empty listing fell into the generate-style error
+    // message and the model misread it as a generation outage).
+    if (resp && !resp.slots && (resp.total !== undefined)) {
+      resp.slots = [];
+    }
     if (resp && resp.slots) {
-      return {
+      var out = {
         success: true,
         count: resp.slots.length,
         slots: resp.slots
       };
+      if (slug) {
+        out.filtered_by_media_slug = slug;
+        out.note = "filtered by media_slug prefix — every slot whose job slug starts with '" + slug + "'. Rows carry job_id + media_slug + active_variant.preview_url for direct recovery.";
+      } else {
+        out.note = "shared gallery (all posts). Pass media_slug prefix to scope to one post's deck. Rows carry job_id + media_slug + active_variant.preview_url.";
+      }
+      return out;
     } else {
       return {
         success: false,
-        error: (resp && resp.error) ? resp.error : "Unexpected response from builder2 API"
+        error: (resp && resp.error) ? resp.error :
+          "Unexpected response from builder2 API — no job was created. Raw response: " + JSON.stringify(resp).substring(0, 300)
       };
     }
   } catch (e) {
@@ -477,8 +613,8 @@ function actionListSlots() {
 // actionJobInfo — verify a media job BY JOB ID (the truthful check for
 // "does this job/URL exist?"). get_slot takes a slot_KEY, not a job id —
 // passing a job id there 404s and has sent agents into verification
-// spirals where they regenerated perfectly good media. GET /jobs/{job_id}
-// returns status + variant URLs.
+// spirals where they regenerated perfectly good media (Leo's cover
+// incident, 2026-09-03). GET /jobs/{job_id} returns status + URL.
 function actionJobInfo(params) {
   if (!params.job_id) {
     return { success: false, error: "job_id is required for job_info action" };
@@ -493,9 +629,9 @@ function actionJobInfo(params) {
     return { success: false, job_id: params.job_id, exists: false, error: "empty response" };
   }
   var j = resp.job || resp;
-  // slots arrives as { "0": [ {preview_url, content_type, ...} ] } — the
-  // variant URLs ARE the media (jobs without media_slug have no separate
-  // permanent_url field).
+  // slots arrives as { "0": [ {preview_url, content_type, ...} ] } —
+  // the variant URLs ARE the media (jobs without media_slug have no
+  // separate permanent_url field).
   var variantURL = "";
   if (j.slots && typeof j.slots === "object") {
     for (var k in j.slots) {
@@ -546,15 +682,35 @@ function actionGetSlot(params) {
 if (!apiKey) {
   return JSON.stringify({
     success: false,
-    error: "BUILDER2_API_KEY not configured (set the env variable with your Builder2 API key, prefix bk2_). Configure the builder2 vendor service in Settings > Services."
+    error: "BUILDER2_API_KEY not configured. Configure the builder2 vendor service in Settings > Services."
   });
 }
 
 // "generate" is the default action — models occasionally drop the field
 // (glm-5.x parallel-batch arg-drop; real incidents 2026-08-30/31).
-var action = input && input.action ? String(input.action) : "generate";
+// Default action = list_slots (read-only): a field-dropped or bare call
+// lands on information, never on a billed generation. Agents that meant
+// generate get a gallery receipt back and self-correct on the next call.
+var action = input && input.action ? String(input.action) : "list_slots";
 if (action === "get" || action === "create" || action === "new") {
   action = "generate"; // near-miss synonyms
+}
+// Generate-shape routing (2026-09-14, owner decision — replaces the
+// corrective-error guard): a call carrying GENERATION fields but NO action
+// (glm field-drop; Tiffany Marigolds incident aborted a whole run as a
+// phantom outage) forwards to builder2 AS A GENERATE. Complete payloads
+// simply succeed; incomplete ones get builder2's real validation error
+// for self-correction. A failed/invalid submit creates no job and costs
+// nothing. Bare calls (no generate fields) stay read-only list_slots.
+if (action === "list_slots" && !input.action) {
+  var genFields = ["prompt", "content_type", "character_slug", "character_image_url", "image_size", "audio_url", "page_url", "image_url", "clips", "video_file", "audiobook_file", "post_file"];
+  for (var gi = 0; gi < genFields.length; gi++) {
+    var v = input[genFields[gi]];
+    if (v !== undefined && v !== null && v !== "") {
+      action = "generate";
+      break;
+    }
+  }
 }
 
 var result;
@@ -574,7 +730,7 @@ switch (action) {
     break;
 
   case "list_slots":
-    result = actionListSlots();
+    result = actionListSlots(input);
     break;
 
   case "job_info":
@@ -590,7 +746,7 @@ switch (action) {
   default:
     result = {
       success: false,
-      error: "Unknown action: " + action + ". Valid actions: generate, regenerate, list_slots, get_slot"
+      error: "Unknown action: " + action + ". Valid actions: list_slots (default), generate, regenerate, get_slot, job_info"
     };
 }
 
