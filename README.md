@@ -8,6 +8,32 @@ by default, or any self-hosted Builder2 instance.
 
 ---
 
+## Host contract (running outside NXagents)
+
+The skill is a synchronous ES5 script. The canonical host (NXagents goja VM) injects
+`input` + `env` globals, `fetchJSON` / `fetchJSONPost` / `fetchJSONPut` / `fetchJSONDelete`
+HTTP helpers, and `readFile(path)`. **On any other runtime the built-in polyfill kicks in
+automatically when `require` is reachable** — it installs `curl`-backed HTTP helpers and an
+`fs`-backed `readFile`, so plain Node works with zero glue:
+
+```js
+// runs the skill from any Node script or tool runner
+const fs = require("fs");
+const src = fs.readFileSync("index.js", "utf8");
+const result = new Function("input", "env", "require", src)(
+  { action: "generate", prompt: "a red bicycle", content_type: "image" },
+  { BUILDER2_API_KEY: "bk2_..." }   // or BUILDER2_BASE_URL for self-hosted
+);
+const receipt = JSON.parse(result);   // { success, job_id, url, ... }
+```
+
+- `input` / `env` are the call arguments and environment (missing globals default to `{}`).
+- The script ends with a top-level `return JSON.stringify(result)` — load it via
+  `new Function(...)` (as above) or any wrapper that captures the return value; a bare
+  `require()` would run it but discard the result.
+- Runtimes without `require` (browser sandboxes, custom VMs): inject the four `fetchJSON*`
+  helpers + `readFile` yourself — each is `fn(url, payload?, headers?) → parsedJSON`.
+
 ## Why
 
 Agents need media, but most generation APIs are async, slow, and return links that rot.

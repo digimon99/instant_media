@@ -6,10 +6,11 @@
 // Dual-host (2026-09-11 PhonkNation incident: api.builder2.com edge dropped
 // POSTs entirely — zero jobs at origin — while www.builder2.com served fine
 // in the same minutes). Generate/media calls try each host once.
-// Open-source edition: point at any Builder2 instance via BUILDER2_BASE_URL
-// (default https://api.builder2.com). The dual-host failover only applies to
-// the default SaaS hosts — a self-hosted override has no www-alt.
-var BASE_URL = (env && env.BUILDER2_BASE_URL) ? String(env.BUILDER2_BASE_URL).trim().replace(/\/$/, "") : "https://api.builder2.com";
+// Single-source portability: BUILDER2_BASE_URL env override points the skill
+// at any self-hosted Builder2 instance (NXagents never sets it — inert here).
+// Dual-host failover applies only to the default SaaS hosts; a self-hosted
+// override has no www-alt.
+var BASE_URL = (typeof env !== "undefined" && env && env.BUILDER2_BASE_URL) ? String(env.BUILDER2_BASE_URL).trim().replace(/\/$/, "") : "https://api.builder2.com";
 var BASE_URL_ALT = (BASE_URL === "https://api.builder2.com") ? "https://www.builder2.com" : BASE_URL;
 function postBuildMedia(payload, headers) {
   try {
@@ -23,7 +24,64 @@ function postBuildMedia(payload, headers) {
   }
 }
 
-var apiKey = env && env.BUILDER2_API_KEY ? String(env.BUILDER2_API_KEY).trim() : "";
+var apiKey = (typeof env !== "undefined" && env && env.BUILDER2_API_KEY) ? String(env.BUILDER2_API_KEY).trim() : "";
+
+// Single-source portability: external loaders (plain Node, Bun, tool runners)
+// may not inject the NXagents host helpers. When require is reachable we
+// polyfill curl-backed SYNC HTTP (Promise fetch cannot be awaited from ES5
+// sync code) + fs-backed readFile. Under the NXagents goja VM require does
+// not exist and the host helpers win — this whole block no-ops.
+if (typeof env === "undefined") { env = {}; }
+if (typeof input === "undefined") { input = {}; }
+
+(function () {
+  if (typeof fetchJSONPost !== "undefined") return; // host provides the helpers
+  var hasRequire = (typeof require === "function");
+  if (!hasRequire) return; // host must inject fetchJSON* itself (see OSS README)
+  var cp = require("child_process");
+  var fs = require("fs");
+
+  function httpJson(method, url, payload, headers) {
+    var args = ["-sS", "-m", "180", "-X", method, url];
+    for (var k in headers || {}) {
+      args.push("-H"); args.push(k + ": " + headers[k]);
+    }
+    var body = null;
+    if (payload !== undefined && payload !== null) {
+      body = (typeof payload === "string") ? payload : JSON.stringify(payload);
+      args.push("-H", "Content-Type: application/json");
+      args.push("--data-binary", "@-");
+    }
+    var opts = { input: body || "", maxBuffer: 32 * 1024 * 1024, timeout: 185000 };
+    var out;
+    try {
+      out = cp.execSync("curl " + args.map(shellQuote).join(" "), opts).toString();
+    } catch (e) {
+      throw new Error("http " + method + " " + url + " failed: " + String(e.message || e));
+    }
+    if (!out) throw new Error("empty response body from " + url);
+    try {
+      return JSON.parse(out);
+    } catch (e2) {
+      throw new Error("non-JSON response from " + url + ": " + out.substring(0, 200));
+    }
+  }
+  function shellQuote(a) {
+    return "'" + String(a).replace(/'/g, "'\\''") + "'";
+  }
+
+  var g = (typeof globalThis !== "undefined") ? globalThis : (typeof global !== "undefined" ? global : this);
+  g.fetchJSON = function (url, headers) { return httpJson("GET", url, null, headers); };
+  g.fetchJSONPost = function (url, payload, headers) { return httpJson("POST", url, payload, headers); };
+  g.fetchJSONPut = function (url, payload, headers) { return httpJson("PUT", url, payload, headers); };
+  g.fetchJSONDelete = function (url, headers) { return httpJson("DELETE", url, null, headers); };
+  if (typeof readFile === "undefined") {
+    g.readFile = function (path) {
+      try { return fs.readFileSync(String(path), "utf8"); }
+      catch (e) { return { error: String(e.message || e) }; }
+    };
+  }
+})();
 
 function authHeaders() {
   return {
@@ -344,11 +402,19 @@ function actionGenerate(params) {
   // default, ON only when the caller explicitly sets enhance_prompt=true
   // (a deliberate one-off variety pick). Explicit false always wins.
   if (contentType === "image" || contentType === "infographic") {
-    // Open-source edition: opt-in pass-through — set enhance_prompt=true to
-    // have the server append a curated style directive (SaaS feature; older
-    // or self-hosted servers ignore the field harmlessly).
-    if (params.enhance_prompt === true) {
-      payload.enhance_prompt = true;
+    var wantsEnhance = params.enhance_prompt;
+    if (wantsEnhance === undefined || wantsEnhance === null || wantsEnhance === "") {
+      // SaaS default: ON for image (art-direction engine exists), OFF for
+      // infographic. A BUILDER2_BASE_URL override (self-hosted) flips image
+      // to opt-in — self-hosted servers may lack the art-direction engine.
+      wantsEnhance = contentType === "image" && BASE_URL === "https://api.builder2.com";
+    }
+    payload.enhance_prompt = !!wantsEnhance;
+    if (payload.enhance_prompt) {
+      var etid = String(params.enhance_typeid || "").trim();
+      if (!etid && slug && /thumb|cover|hero|featured/.test(slug)) etid = "article";
+      if (!etid && contentType === "infographic") etid = "card";
+      if (etid) payload.enhance_typeid = etid;
     }
   }
 

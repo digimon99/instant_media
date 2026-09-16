@@ -76,6 +76,7 @@ permissions:
   - env
 is_enabled: true
 ---
+
 > **Open-source edition** — point at any Builder2 instance with `BUILDER2_BASE_URL`
 > (default `https://api.builder2.com`) and authenticate with `BUILDER2_API_KEY`
 > (a `bk2_…` API key; self-hosted servers accept their own keys).
